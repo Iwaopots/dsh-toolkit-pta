@@ -116,3 +116,22 @@ v1 先以 CLI + skill 的形态在 DSH 工作区里跑通（`node "$DSH_PTA_CLI"
 - **v0.2**：拿用户真号实测登录 → 拉题集 → 拉一题状态 → 交一道练习题（编程题先本地自测），把 `TODO(verify)` 逐个消掉；验证码分支实测。
 - **v0.3**：DSH 插件化（index.js + 工作区自动同步 skill + `DSH_PTA_ACCOUNTS` 快照注入，照 educoder 的 `accounts.js` 模式）；看板进 DSH 面板。
 - **之后**：按用户需求改 —— 队列调度（一键通关题集）、多账号批量、错题重做、经验沉淀（`解题经验.md` 同款）。
+
+## 8. 实测记录（2026-11-16 凌晨，真号）
+
+- 登录端点 `POST passport.pintia.cn/api/users/sessions` 是真的：第一次无票请求即回
+  `GATEWAY_WRONG_CAPTCHA`，与逆向笔记一致。
+- 验证码是真卡点：预热 + 浏览器级请求头也躲不掉，网关对这个账号/IP 每次都弹滑块。
+- 已实现纯协议滑块求解器（`cli/lib/captcha.mjs` + `cli/lib/locate.py`，算法源自
+  kisakiayano/PTA-mcp 的 solve.py，MIT）：prehandle → 取图 → 缺口定位 → PoW → verify。
+  **2026-11-16 实测解出 x=443，用时 63.6 秒**，票有效、登录重试已发出。
+  注意：本机 Python requests 走出口代理到 `turing.captcha.qcloud.com` 会超时，
+  所以 HTTP 全走 Node fetch，只把图像计算交给 Python（Pillow + numpy，不联网）。
+  求解器依赖：Python 3 + Pillow/numpy（DSH 所在机器上要有）。
+- 登录重试被 PTA 拒：**「该手机号无效」**——用户给的手机号不是该 PTA 账号的
+  注册手机号，或账号本身是邮箱注册。待用户确认注册方式（邮箱/手机号）再试。
+  勿连续盲试，防风控。
+- `u/current` 正确域名是 `passport.pintia.cn`（骨架初版写错成 pintia.cn，已修）。
+- `npm pack` 已验：包 15.4 kB、8 个文件，可打 tgz。DSH 侧现状：CLI + skill 可在
+  DSH 工作区终端里跑（Node ≥22），但完整插件（index.js / Web 面板 / 自动同步）
+  还没写，那是 v0.3 的活。

@@ -5,6 +5,21 @@
 const BASE = 'https://pintia.cn';
 const PASSPORT = 'https://passport.pintia.cn';
 
+// 浏览器级请求头：网关会按请求特征打风控分，裸 fetch 极易触发验证码。
+// 取自 PTA-mcp（MIT）的实测配置。
+const BROWSER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36',
+  'Accept-Language': 'zh-CN,zh;q=0.9',
+  Origin: 'https://pintia.cn',
+  Referer: 'https://pintia.cn/',
+  'sec-ch-ua': '"Chromium";v="154", "Google Chrome";v="154", "Not A(Brand";v="99"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"Windows"',
+  'sec-fetch-site': 'same-site',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-dest': 'empty',
+};
+
 export class PTAError extends Error {
   constructor(code, message) {
     super(message || code);
@@ -43,6 +58,7 @@ export class PTAClient {
     const res = await fetch(`${base}${path}`, {
       method,
       headers: {
+        ...BROWSER_HEADERS,
         Accept: 'application/json',
         'Content-Type': 'application/json',
         ...(this.cookie ? { Cookie: this.cookie } : {}),
@@ -62,6 +78,17 @@ export class PTAClient {
     return data;
   }
 
+  // 预热：先 GET 登录页拿 PTASession / JSESSIONID 再登录。
+  // 不预热直接发登录请求极易被网关判风险（PTA-mcp 实测）。
+  async prewarm() {
+    const res = await fetch('https://pintia.cn/auth/login', {
+      headers: { ...BROWSER_HEADERS, Accept: 'text/html,application/xhtml+xml' },
+    });
+    const next = pickCookies(res);
+    if (next) this.cookie = this.cookie ? `${this.cookie}; ${next}` : next;
+    await res.text().catch(() => {});
+  }
+
   // TODO(verify): 登录。reactive 验证码：先无票发一次，网关回 GATEWAY_WRONG_CAPTCHA
   // 才需要 ticket + randStr（腾讯防水墙 TencentCaptcha("194593025") 的票）。
   async login({ user, password, ticket = '', randStr = '' }) {
@@ -78,8 +105,9 @@ export class PTAClient {
   }
 
   // TODO(verify): 会话复用判定。有效直接复用，避免重复登录触发风控。
+  // 注意：u/current 在 passport 域名下，不在 pintia.cn 下（之前写错过）。
   async current() {
-    return this.request('/api/u/current');
+    return this.request('/api/u/current', { base: PASSPORT });
   }
 
   // TODO(verify): 题目集列表，含 examIdByProblemSetId。

@@ -78,15 +78,31 @@ async function main() {
         if (!password) throw new Error('no password: pipe it via --password-stdin or set PTA_PASSWORD (never commit it)');
         const account = store.addAccount({ label: o.label, login: user });
         const client = new PTAClient();
+        await client.prewarm();
         try {
           await client.login({ user, password, ticket: o.ticket || '', randStr: o.randStr || '' });
         } catch (e) {
-          if (e.code === 'GATEWAY_WRONG_CAPTCHA') {
+          if (e.code === 'GATEWAY_WRONG_CAPTCHA' && !o.noCaptcha) {
+            // 滑块验证码：先走纯协议求解器（tcaptcha.py），失败再回退人工。
+            console.log('captcha hit, trying protocol solver...');
+            try {
+              const { solveCaptcha } = await import('./lib/captcha.mjs');
+              const solved = await solveCaptcha({});
+              console.log(`captcha solved x=${solved.x} in ${solved.stat?.total_ms}ms, retrying login...`);
+              await client.login({ user, password, ticket: solved.ticket, randStr: solved.randstr });
+            } catch (solveErr) {
+              console.log(`auto-solve failed: ${solveErr.message}`);
+              console.log('manual fallback: complete the Tencent captcha once in the DSH browser, then retry with --ticket <T> --rand-str <R>');
+              store.setAccountStatus(account.id, 'manual');
+              return;
+            }
+          } else if (e.code === 'GATEWAY_WRONG_CAPTCHA') {
             console.log('captcha required: complete the Tencent captcha once in the DSH browser, then retry with --ticket <T> --rand-str <R>');
             store.setAccountStatus(account.id, 'manual');
             return;
+          } else {
+            throw e;
           }
-          throw e;
         }
         store.writeSession(account.id, { cookie: client.cookie, updatedAt: new Date().toISOString() });
         store.setAccountStatus(account.id, 'ready');
